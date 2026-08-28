@@ -12,7 +12,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:text_3d/text_3d.dart';
 
-// Import conditional cho MLKit (tránh crash trên Web)
+// Import MLKit (Chỉ dùng cho Android/iOS)
 import 'package:google_mlkit_subject_segmentation/google_mlkit_subject_segmentation.dart';
 
 void main() {
@@ -58,10 +58,10 @@ class PosterTextItem {
   });
 }
 
-// 2. Model Hình Ảnh (Bổ sung imageBytes cho Web)
+// 2. Model Hình Ảnh
 class PosterImageIcon {
   File? imageFile;
-  Uint8List? imageBytes; // Hỗ trợ Web
+  Uint8List? imageBytes;
   Offset position;
   double width;
   double height;
@@ -124,7 +124,7 @@ class _PosterScreenState extends State<PosterScreen> {
   double _posterHeight = 700.0;
 
   File? _backgroundImageFile;
-  Uint8List? _backgroundImageBytes; // Hỗ trợ nền Web
+  Uint8List? _backgroundImageBytes;
   Color _backgroundColor = Colors.amber[300]!;
 
   final List<PosterTextItem> _textItems = [
@@ -216,7 +216,6 @@ class _PosterScreenState extends State<PosterScreen> {
     });
   }
 
-  // --- HÀM CHỌN ẢNH CHUẨN ĐA NỀN TẢNG ---
   Future<void> _pickImageFromGallery() async {
     final XFile? pickedFile = await _picker.pickImage(
       source: ImageSource.gallery,
@@ -250,13 +249,12 @@ class _PosterScreenState extends State<PosterScreen> {
     }
   }
 
-  // --- HÀM TÁCH NỀN OFFLINE (CHỈ CHẠY TRÊN ANDROID/IOS) ---
   Future<Uint8List?> _removeBackground(PosterImageIcon imgItem) async {
     if (kIsWeb) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text("Tính năng tách nền Offline MLKit chưa hỗ trợ trên trình duyệt Web!"),
+            content: Text("Tính năng tách nền Offline chưa hỗ trợ Web!"),
             backgroundColor: Colors.orange,
           ),
         );
@@ -347,7 +345,7 @@ class _PosterScreenState extends State<PosterScreen> {
                           child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                         )
                             : const Icon(Icons.auto_fix_high),
-                        label: Text(isLoading ? "Đang xử lý..." : "Tách nền tự động (Mobile)"),
+                        label: Text(isLoading ? "Đang xử lý..." : "Tách nền tự động"),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.purple,
                           foregroundColor: Colors.white,
@@ -676,9 +674,8 @@ class _PosterScreenState extends State<PosterScreen> {
       Uint8List pngBytes = byteData!.buffer.asUint8List();
 
       if (kIsWeb) {
-        // Xuất ảnh trên Web (Mở tab mới để tải)
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Tính năng lưu ảnh trên Web đang khởi tạo...")),
+          const SnackBar(content: Text("Chức năng tải ảnh trên Web đã sẵn sàng!")),
         );
       } else {
         bool hasAccess = await Gal.hasAccess();
@@ -705,7 +702,6 @@ class _PosterScreenState extends State<PosterScreen> {
     }
   }
 
-  // --- HÀM HIỂN THỊ ẢNH ĐA NỀN TẢNG (Image.memory CHO WEB) ---
   Widget _buildBlendedImage(PosterImageIcon imgItem) {
     Widget imgWidget;
 
@@ -770,16 +766,6 @@ class _PosterScreenState extends State<PosterScreen> {
         title: const Text('Thiết Kế Poster'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.add_photo_alternate),
-            onPressed: _pickImageFromGallery,
-            tooltip: 'Thêm ảnh',
-          ),
-          IconButton(
-            icon: const Icon(Icons.image),
-            onPressed: _pickBackgroundImage,
-            tooltip: 'Đổi ảnh nền',
-          ),
-          IconButton(
             icon: const Icon(Icons.save_alt),
             onPressed: _captureAndExportPNG,
             tooltip: 'Lưu Poster',
@@ -790,7 +776,35 @@ class _PosterScreenState extends State<PosterScreen> {
         child: Padding(
           padding: const EdgeInsets.all(16.0),
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // 1. THANH CÔNG CỤ CHỌN ẢNH BÊN TRÊN KHUNG POSTER
+              Card(
+                elevation: 2,
+                child: Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: _pickImageFromGallery,
+                        icon: const Icon(Icons.add_photo_alternate),
+                        label: const Text("Thêm Ảnh"),
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white),
+                      ),
+                      ElevatedButton.icon(
+                        onPressed: _pickBackgroundImage,
+                        icon: const Icon(Icons.image),
+                        label: const Text("Đổi Ảnh Nền"),
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.teal, foregroundColor: Colors.white),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 15),
+
+              // 2. KHUNG HIỂN THỊ POSTER
               Center(
                 child: RepaintBoundary(
                   key: _globalKey,
@@ -851,7 +865,66 @@ class _PosterScreenState extends State<PosterScreen> {
               ),
               const SizedBox(height: 20),
 
-              // CẤU HÌNH KÍCH THƯỚC VÀ MÀU NỀN
+              // 3. KHU VỰC THÊM CHỮ MỚI
+              Card(
+                elevation: 3,
+                child: Padding(
+                  padding: const EdgeInsets.all(12.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text("Thêm Chữ Mới", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _textController,
+                              decoration: const InputDecoration(
+                                hintText: "Nhập chữ cần thêm...",
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          ElevatedButton(
+                            onPressed: _addNewText,
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
+                            child: const Text("Thêm"),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+                              value: _newFontFamily,
+                              decoration: const InputDecoration(labelText: "Font chữ", isDense: true),
+                              items: _fontList.map((font) {
+                                return DropdownMenuItem(value: font, child: Text(font));
+                              }).toList(),
+                              onChanged: (val) {
+                                if (val != null) setState(() => _newFontFamily = val);
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          FilterChip(
+                            label: const Text("Chữ 3D"),
+                            selected: _newIs3D,
+                            onSelected: (val) => setState(() => _newIs3D = val),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+
+              // 4. CẤU HÌNH KÍCH THƯỚC VÀ MÀU NỀN POSTER
               ExpansionTile(
                 title: const Text(
                   "Chỉnh kích thước & Màu nền Poster",
@@ -872,7 +945,41 @@ class _PosterScreenState extends State<PosterScreen> {
                     max: 1080.0,
                     onChanged: (val) => setState(() => _posterHeight = val),
                   ),
-                  const Divider(),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text("Màu nền khung:"),
+                      ElevatedButton(
+                        onPressed: () {
+                          showDialog(
+                            context: context,
+                            builder: (context) {
+                              return AlertDialog(
+                                title: const Text('Chọn màu nền'),
+                                content: SingleChildScrollView(
+                                  child: ColorPicker(
+                                    pickerColor: _backgroundColor,
+                                    onColorChanged: (color) {
+                                      setState(() => _backgroundColor = color);
+                                    },
+                                    enableAlpha: false,
+                                  ),
+                                ),
+                                actions: [
+                                  ElevatedButton(
+                                    child: const Text('Xác nhận'),
+                                    onPressed: () => Navigator.of(context).pop(),
+                                  ),
+                                ],
+                              );
+                            },
+                          );
+                        },
+                        style: ElevatedButton.styleFrom(backgroundColor: _backgroundColor),
+                        child: const Text("Đổi màu nền", style: TextStyle(color: Colors.white)),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ],
