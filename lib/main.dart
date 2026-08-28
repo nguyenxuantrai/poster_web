@@ -778,6 +778,7 @@ class _PosterScreenState extends State<PosterScreen> {
               const SizedBox(height: 20),
 
               // 3. KHU VỰC THÊM CHỮ MỚI
+              // 3. KHU VỰC THÊM CHỮ MỚI (ĐÃ THÊM NÚT CHỌN MÀU CHỮ)
               Card(
                 elevation: 3,
                 child: Padding(
@@ -811,9 +812,10 @@ class _PosterScreenState extends State<PosterScreen> {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 12),
                       Row(
                         children: [
+                          // 1. CHỌN FONT CHỮ
                           Expanded(
                             child: DropdownButtonFormField<String>(
                               value: _newFontFamily,
@@ -827,6 +829,56 @@ class _PosterScreenState extends State<PosterScreen> {
                             ),
                           ),
                           const SizedBox(width: 10),
+
+                          // 2. NÚT CHỌN MÀU CHỮ MỚI
+                          GestureDetector(
+                            onTap: () {
+                              showDialog(
+                                context: context,
+                                builder: (BuildContext context) {
+                                  return AlertDialog(
+                                    title: const Text('Chọn màu chữ mới'),
+                                    content: SingleChildScrollView(
+                                      child: ColorPicker(
+                                        pickerColor: _newTextColor,
+                                        onColorChanged: (color) {
+                                          setState(() => _newTextColor = color);
+                                        },
+                                        pickerAreaHeightPercent: 0.7,
+                                        enableAlpha: false,
+                                      ),
+                                    ),
+                                    actions: [
+                                      ElevatedButton(
+                                        child: const Text('Đồng ý'),
+                                        onPressed: () => Navigator.of(context).pop(),
+                                      ),
+                                    ],
+                                  );
+                                },
+                              );
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: _newTextColor,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: Colors.grey),
+                              ),
+                              child: const Text(
+                                "Màu chữ",
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                  shadows: [Shadow(blurRadius: 3, color: Colors.black)],
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+
+                          // 3. BẬT/TẮT NỔI 3D
                           FilterChip(
                             label: const Text("Chữ 3D"),
                             selected: _newIs3D,
