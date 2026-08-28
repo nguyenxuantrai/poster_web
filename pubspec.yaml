@@ -30,10 +30,10 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  flutter_colorpicker: ^1.1.0
   image_picker: ^1.0.7
   gal: ^2.3.0
   http: ^1.2.0
+  flutter_colorpicker: ^1.0.6
   google_fonts: ^6.2.1
   google_mlkit_subject_segmentation: ^0.1.0
   image: ^4.2.0                             # <--- Thêm mới
