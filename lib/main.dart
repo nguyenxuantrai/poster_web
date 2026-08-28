@@ -1,8 +1,11 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
-
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:gal/gal.dart'; // Dùng để lưu ảnh vào Thư viện Android/iOS
+
+// Import thư viện HTML điều kiện (Chỉ load khi chạy Web)
+import 'package:universal_html/html.dart' as html;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
@@ -575,10 +578,45 @@ class _PosterScreenState extends State<PosterScreen> {
       ui.Image image = await boundary.toImage(pixelRatio: 3.0);
       ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Đã chụp thành công Poster!"), backgroundColor: Colors.green),
-        );
+      if (byteData == null) return;
+      Uint8List pngBytes = byteData.buffer.asUint8List();
+
+      if (kIsWeb) {
+        // --- XỬ LÝ KHI CHẠY TRÊN WEB ---
+        final blob = html.Blob([pngBytes], 'image/png');
+        final url = html.Url.createObjectUrlFromBlob(blob);
+        final anchor = html.AnchorElement(href: url)
+          ..setAttribute("download", "poster_${DateTime.now().millisecondsSinceEpoch}.png")
+          ..click();
+        html.Url.revokeObjectUrl(url);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Đã tải Poster về thư mục Downloads!"),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        // --- XỬ LÝ KHI CHẠY TRÊN ANDROID / IOS ---
+        bool hasAccess = await Gal.hasAccess();
+        if (!hasAccess) {
+          hasAccess = await Gal.requestAccess();
+          if (!hasAccess) return;
+        }
+
+        // Lưu trực tiếp vào Thư viện ảnh (Bộ sưu tập / Gallery) của Android
+        await Gal.putImageBytes(pngBytes, album: 'PosterMaker');
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Đã lưu Poster vào Bộ sưu tập (Gallery)!"),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
