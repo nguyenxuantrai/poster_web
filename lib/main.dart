@@ -656,20 +656,35 @@ class _PosterScreenState extends State<PosterScreen> {
   }
 
   // [SỬA] Hàm Xuất PNG Hoạt Động Mượt Cả Trên Web Lẫn Android
-  Future<void> _captureAndExportPNG() async {
+  // [CẬP NHẬT] Bỏ viền xanh chọn ảnh trước khi xuất PNG
+  Future<Uint8List?> _captureAndExportPNG() async {
     try {
+      // 1. Tạm lưu lại ảnh đang chọn và gán null để ẩn viền xanh lá ngay lập tức
+      final previousSelectedIndex = _selectedImageIndex;
+      setState(() {
+        _selectedImageIndex = null;
+      });
+
+      // 2. Chờ Flutter vẽ lại giao diện (mất viền xanh) trước khi chụp
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      // 3. Tiến hành chụp ảnh màn hình Poster
       RenderRepaintBoundary boundary =
       _globalKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
       ui.Image image = await boundary.toImage(pixelRatio: 3.0);
       ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
 
-      if (byteData == null) return;
+      // 4. Khôi phục lại viền chọn cho người dùng tiếp tục chỉnh sửa
+      setState(() {
+        _selectedImageIndex = previousSelectedIndex;
+      });
+
+      if (byteData == null) return null;
       Uint8List pngBytes = byteData.buffer.asUint8List();
 
+      // 5. Lưu hoặc Tải ảnh xuống
       if (kIsWeb) {
-        // Tải file về Web
         downloadImageWeb(pngBytes);
-
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -679,11 +694,10 @@ class _PosterScreenState extends State<PosterScreen> {
           );
         }
       } else {
-        // Lưu vào Thư viện Android/iOS
         bool hasAccess = await Gal.hasAccess();
         if (!hasAccess) {
           hasAccess = await Gal.requestAccess();
-          if (!hasAccess) return;
+          if (!hasAccess) return null;
         }
 
         await Gal.putImageBytes(pngBytes, album: 'PosterMaker');
