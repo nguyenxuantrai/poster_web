@@ -27,11 +27,15 @@
    <key>LSRequiresIPhoneOS</key>
    <true/>
 
-   <!-- Quyền chọn ảnh từ thư viện (Đọc) -->
+   <!-- 1. Quyền chụp ảnh từ Camera (BẮT BUỘC KHI DÙNG CAMERA) -->
+   <key>NSCameraUsageDescription</key>
+   <string>Ứng dụng cần sử dụng Camera để chụp ảnh chèn trực tiếp vào Poster.</string>
+
+   <!-- 2. Quyền chọn ảnh từ thư viện (Đọc) -->
    <key>NSPhotoLibraryUsageDescription</key>
    <string>Ứng dụng cần truy cập thư viện ảnh để bạn chọn ảnh chèn vào Poster.</string>
 
-   <!-- Quyền lưu ảnh Poster vào thư viện (Ghi) -->
+   <!-- 3. Quyền lưu ảnh Poster vào thư viện (Ghi) -->
    <key>NSPhotoLibraryAddUsageDescription</key>
    <string>Ứng dụng cần quyền lưu ảnh Poster bạn thiết kế vào Thư viện ảnh.</string>
 
