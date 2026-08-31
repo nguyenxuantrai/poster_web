@@ -1,19 +1,19 @@
-//code poster sau chưa có web
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:ui' as ui;
 import 'dart:typed_data';
-import 'package:flutter/foundation.dart';
+import 'dart:ui' as ui;
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'package:gal/gal.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:http/http.dart' as http;
 import 'package:google_fonts/google_fonts.dart';
-import 'package:text_3d/text_3d.dart';
 import 'package:google_mlkit_subject_segmentation/google_mlkit_subject_segmentation.dart';
-import 'package:image/image.dart' as img;
+import 'package:image_picker/image_picker.dart';
+import 'package:text_3d/text_3d.dart';
+
+import 'web_download.dart' if (dart.library.io) 'dummy_download.dart';
 
 void main() {
   runApp(const PosterApp());
@@ -31,7 +31,7 @@ class PosterApp extends StatelessWidget {
   }
 }
 
-// 1. Model Chữ (Bổ sung cấu hình 3D)
+// 1. Model Quản lý Chữ
 class PosterTextItem {
   String text;
   Offset position;
@@ -58,9 +58,9 @@ class PosterTextItem {
   });
 }
 
-// 2. Model Hình Ảnh
+// 2. Model Quản lý Hình Ảnh Ghép
 class PosterImageIcon {
-  File imageFile;
+  Uint8List imageBytes;
   Offset position;
   double width;
   double height;
@@ -71,7 +71,7 @@ class PosterImageIcon {
   bool isOval;
 
   PosterImageIcon({
-    required this.imageFile,
+    required this.imageBytes,
     required this.position,
     this.width = 120.0,
     this.height = 120.0,
@@ -94,14 +94,22 @@ class _PosterScreenState extends State<PosterScreen> {
   final GlobalKey _globalKey = GlobalKey();
   final TextEditingController _textController = TextEditingController();
 
-  // Khai báo cấu hình tạo chữ mới
+  // Biến quản lý tạo chữ mới
   Color _newTextColor = Colors.black;
   double _newFontSize = 22.0;
   String _newFontFamily = 'Dancing Script';
   bool _newIs3D = false;
   ThreeDStyle _newThreeDStyle = ThreeDStyle.raised;
 
-  // Danh sách font (Bao gồm Google Fonts và Font Hệ thống)
+  // Biến quản lý vị trí ảnh ghép đang được chọn
+  int? _selectedImageIndex;
+
+  // Biến kích thước & Nền Poster
+  double _posterWidth = 350.0;
+  double _posterHeight = 500.0;
+  Color _backgroundColor = Colors.amber[300]!;
+  Uint8List? _backgroundImageBytes;
+
   final List<String> _fontList = [
     'Dancing Script',
     'Caveat',
@@ -114,17 +122,12 @@ class _PosterScreenState extends State<PosterScreen> {
     'Playfair Display',
     'Roboto',
     'Open Sans',
-    'Arial',            // Font hệ thống
-    'Times New Roman',  // Font hệ thống
+    'Arial',
+    'Times New Roman',
   ];
 
   final ImagePicker _picker = ImagePicker();
-
-  double _posterWidth = 550.0;
-  double _posterHeight = 700.0;
-
-  File? _backgroundImageFile;
-  Color _backgroundColor = Colors.amber[300]!;
+  bool _isRemovingBg = false;
 
   final List<PosterTextItem> _textItems = [
     PosterTextItem(
@@ -149,7 +152,6 @@ class _PosterScreenState extends State<PosterScreen> {
     'Làm mờ/Trộn (Difference)': BlendMode.difference,
   };
 
-  // --- HÀM LẤY FONT STYLE THÔNG MINH ---
   TextStyle _getFontFamilyStyle(String font, double size, Color color) {
     if (font == 'Arial' || font == 'Times New Roman') {
       return TextStyle(
@@ -175,7 +177,6 @@ class _PosterScreenState extends State<PosterScreen> {
     }
   }
 
-  // --- HÀM WIDGET HIỂN THỊ CHỮ 2D HOẶC 3D ---
   Widget _buildTextWidget(PosterTextItem item) {
     TextStyle style = _getFontFamilyStyle(
       item.fontFamily,
@@ -184,10 +185,7 @@ class _PosterScreenState extends State<PosterScreen> {
     );
 
     if (!item.is3D) {
-      return Text(
-        item.text,
-        style: style,
-      );
+      return Text(item.text, style: style);
     }
 
     return ThreeDText(
@@ -216,27 +214,222 @@ class _PosterScreenState extends State<PosterScreen> {
       _textController.clear();
     });
   }
-/*
-  Future<void> _pickImageFromGallery() async {
-    final XFile? pickedFile = await _picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 1024,
-      imageQuality: 85,
+
+  // --- BỔ SUNG: CHỌN MÀU NỀN VÀ KÍCH THƯỚC POSTER ---
+  void _openPosterSettings() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                top: 20,
+                left: 20,
+                right: 20,
+                bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      "Cấu hình Khung Poster",
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    const Divider(),
+                    const SizedBox(height: 10),
+                    // 1. Màu nền
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text("Màu nền Poster:", style: TextStyle(fontWeight: FontWeight.bold)),
+                        GestureDetector(
+                          onTap: () {
+                            showDialog(
+                              context: context,
+                              builder: (BuildContext context) {
+                                return AlertDialog(
+                                  title: const Text('Chọn màu nền'),
+                                  content: SingleChildScrollView(
+                                    child: ColorPicker(
+                                      pickerColor: _backgroundColor,
+                                      onColorChanged: (color) {
+                                        setState(() => _backgroundColor = color);
+                                        setModalState(() {});
+                                      },
+                                      pickerAreaHeightPercent: 0.7,
+                                      enableAlpha: false,
+                                    ),
+                                  ),
+                                  actions: [
+                                    ElevatedButton(
+                                      child: const Text('Đồng ý'),
+                                      onPressed: () => Navigator.of(context).pop(),
+                                    ),
+                                  ],
+                                );
+                              },
+                            );
+                          },
+                          child: Container(
+                            width: 100,
+                            height: 35,
+                            decoration: BoxDecoration(
+                              color: _backgroundColor,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.grey),
+                            ),
+                            child: const Center(
+                              child: Text(
+                                "Đổi màu",
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  shadows: [Shadow(blurRadius: 3, color: Colors.black)],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (_backgroundImageBytes != null) ...[
+                      const SizedBox(height: 10),
+                      OutlinedButton.icon(
+                        onPressed: () {
+                          setState(() => _backgroundImageBytes = null);
+                          setModalState(() {});
+                        },
+                        icon: const Icon(Icons.delete_forever, color: Colors.red),
+                        label: const Text("Xóa ảnh nền (Dùng màu đơn sắc)", style: TextStyle(color: Colors.red)),
+                      ),
+                    ],
+                    const SizedBox(height: 20),
+                    // 2. Kích thước Poster
+                    Text("Chiều rộng Poster: ${_posterWidth.round()} px"),
+                    Slider(
+                      value: _posterWidth,
+                      min: 250.0,
+                      max: 450.0,
+                      divisions: 20,
+                      onChanged: (val) {
+                        setState(() => _posterWidth = val);
+                        setModalState(() {});
+                      },
+                    ),
+                    Text("Chiều cao Poster: ${_posterHeight.round()} px"),
+                    Slider(
+                      value: _posterHeight,
+                      min: 300.0,
+                      max: 700.0,
+                      divisions: 40,
+                      onChanged: (val) {
+                        setState(() => _posterHeight = val);
+                        setModalState(() {});
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
-    if (pickedFile != null) {
-      setState(() {
-        _imageItems.add(
-          PosterImageIcon(
-            imageFile: File(pickedFile.path),
-            position: const Offset(50, 50),
+  }
+
+  // Xử lý tách nền Offline ML Kit
+  Future<Uint8List?> _removeBackgroundOffline(Uint8List imageBytes) async {
+    if (kIsWeb) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Tính năng tách nền Offline chỉ hỗ trợ trên thiết bị Mobile (Android/iOS)!"),
+            backgroundColor: Colors.orange,
           ),
         );
-      });
+      }
+      return null;
+    }
+
+    SubjectSegmenter? segmenter;
+    try {
+      final tempDir = Directory.systemTemp;
+      final tempFile = File('${tempDir.path}/temp_${DateTime.now().millisecondsSinceEpoch}.png');
+      await tempFile.writeAsBytes(imageBytes);
+
+      final options = SubjectSegmenterOptions(
+        enableForegroundBitmap: true,
+        enableForegroundConfidenceMask: true,
+        enableMultipleSubjects: SubjectResultOptions(
+          enableConfidenceMask: false,
+          enableSubjectBitmap: false,
+        ),
+      );
+
+      segmenter = SubjectSegmenter(options: options);
+      final inputImage = InputImage.fromFile(tempFile);
+      final result = await segmenter.processImage(inputImage);
+
+      if (await tempFile.exists()) {
+        await tempFile.delete();
+      }
+
+      return result.foregroundBitmap;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Lỗi tách nền offline: $e"), backgroundColor: Colors.red),
+        );
+      }
+      return null;
+    } finally {
+      await segmenter?.close();
     }
   }
-*/
-  // Hàm mở hộp thoại cho người dùng chọn nguồn ảnh ghép (Camera hoặc Album)
-  Future<void> _pickImage() async {
+
+  Future<void> _removeBgSelectedImage() async {
+    if (_selectedImageIndex == null || _selectedImageIndex! >= _imageItems.length) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Vui lòng chạm chọn 1 ảnh ghép trên Poster trước!"),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isRemovingBg = true);
+
+    PosterImageIcon selectedItem = _imageItems[_selectedImageIndex!];
+    Uint8List? newBytes = await _removeBackgroundOffline(selectedItem.imageBytes);
+
+    if (newBytes != null) {
+      setState(() {
+        _imageItems[_selectedImageIndex!].imageBytes = newBytes;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Đã tách nền ảnh thành công!"),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    }
+
+    setState(() => _isRemovingBg = false);
+  }
+
+  // --- BỔ SUNG: CHỌN ẢNH TỪ CAMERA HOẶC ALBUM ---
+  void _pickImageSource({required Function(ImageSource source) onSelected}) {
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -251,7 +444,7 @@ class _PosterScreenState extends State<PosterScreen> {
                 title: const Text('Chọn từ Thư viện (Album)'),
                 onTap: () {
                   Navigator.of(context).pop();
-                  _processPickedImage(ImageSource.gallery);
+                  onSelected(ImageSource.gallery);
                 },
               ),
               ListTile(
@@ -259,7 +452,7 @@ class _PosterScreenState extends State<PosterScreen> {
                 title: const Text('Chụp ảnh mới từ Camera'),
                 onTap: () {
                   Navigator.of(context).pop();
-                  _processPickedImage(ImageSource.camera);
+                  onSelected(ImageSource.camera);
                 },
               ),
             ],
@@ -268,15 +461,14 @@ class _PosterScreenState extends State<PosterScreen> {
       },
     );
   }
-  // Hàm xử lý lấy dữ liệu ảnh ghép
-  Future<void> _processPickedImage(ImageSource source) async {
-    try {
+
+  Future<void> _pickImage() async {
+    _pickImageSource(onSelected: (source) async {
       final XFile? pickedFile = await _picker.pickImage(
         source: source,
         maxWidth: 1024,
         imageQuality: 85,
       );
-
       if (pickedFile != null) {
         final bytes = await pickedFile.readAsBytes();
         setState(() {
@@ -286,177 +478,24 @@ class _PosterScreenState extends State<PosterScreen> {
               position: const Offset(50, 50),
             ),
           );
-          _selectedImageIndex = _imageItems.length - 1; // Tự động chọn ảnh mới
+          _selectedImageIndex = _imageItems.length - 1;
         });
       }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Không thể mở ${source == ImageSource.camera ? 'Camera' : 'Album'}: $e")),
-        );
-      }
-    }
+    });
   }
-  //----------------------kết
-  /*
+
   Future<void> _pickBackgroundImage() async {
-    final XFile? pickedFile = await _picker.pickImage(source: ImageSource.gallery);
-    if (pickedFile != null) {
-      setState(() {
-        _backgroundImageFile = File(pickedFile.path);
-      });
-    }
-  }
-*/
-  Future<void> _pickBackgroundImage() async {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(15)),
-      ),
-      builder: (BuildContext context) {
-        return SafeArea(
-          child: Wrap(
-            children: <Widget>[
-              ListTile(
-                leading: const Icon(Icons.photo_library, color: Colors.teal),
-                title: const Text('Chọn Ảnh nền từ Album'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  _processBackgroundImage(ImageSource.gallery);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.camera_alt, color: Colors.orange),
-                title: const Text('Chụp Ảnh nền từ Camera'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  _processBackgroundImage(ImageSource.camera);
-                },
-              ),
-            ],
-          ),
-        );
-      },
-    );
+    _pickImageSource(onSelected: (source) async {
+      final XFile? pickedFile = await _picker.pickImage(source: source);
+      if (pickedFile != null) {
+        final bytes = await pickedFile.readAsBytes();
+        setState(() {
+          _backgroundImageBytes = bytes;
+        });
+      }
+    });
   }
 
-  Future<void> _processBackgroundImage(ImageSource source) async {
-    final XFile? pickedFile = await _picker.pickImage(source: source);
-    if (pickedFile != null) {
-      final bytes = await pickedFile.readAsBytes();
-      setState(() {
-        _backgroundImageBytes = bytes;
-      });
-    }
-  }
-  // --- HÀM TÁCH NỀN ẢNH VIA REMOVE.BG API ---
-  /*
-  Future<File?> _removeBackground(File imageFile) async {
-    const String apiKey = "yGXJ4M4A6PPtd3Jh7p8QvZRz";
-
-    if (apiKey.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Vui lòng nhập API Key hợp lệ!")),
-        );
-      }
-      return null;
-    }
-
-    try {
-      var request = http.MultipartRequest(
-        'POST',
-        Uri.parse('https://api.remove.bg/v1.0/removebg'),
-      );
-      request.headers['X-Api-Key'] = apiKey;
-      request.files.add(await http.MultipartFile.fromPath('image_file', imageFile.path));
-      request.fields['size'] = 'auto';
-
-      var response = await request.send();
-
-      if (response.statusCode == 200) {
-        var bytes = await response.stream.toBytes();
-        Directory tempDir = Directory.systemTemp;
-        String tempPath = '${tempDir.path}/no_bg_${DateTime.now().millisecondsSinceEpoch}.png';
-        File noBgFile = File(tempPath);
-        await noBgFile.writeAsBytes(bytes);
-        return noBgFile;
-      } else {
-        var responseData = await response.stream.bytesToString();
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Lỗi (${response.statusCode}): $responseData")),
-          );
-        }
-        return null;
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Tách nền thất bại: $e")),
-        );
-      }
-      return null;
-    }
-  }
-  */
-//--- hàm tach nền offline
-  Future<File?> _removeBackground(File imageFile) async {
-    SubjectSegmenter? segmenter;
-    try {
-      // 1. Tạo options đúng tham số bắt buộc của package
-      final options = SubjectSegmenterOptions(
-        enableForegroundBitmap: true,         // Lấy ảnh chủ thể
-        enableForegroundConfidenceMask: true, // Lấy mặt nạ phân giải
-        enableMultipleSubjects: SubjectResultOptions(
-          enableConfidenceMask: false,
-          enableSubjectBitmap: false,
-        ),
-      );
-
-      // 2. Khởi tạo Segmenter
-      segmenter = SubjectSegmenter(options: options);
-
-      final inputImage = InputImage.fromFile(imageFile);
-      final result = await segmenter.processImage(inputImage);
-
-      // 3. Trả về mảng byte ảnh foreground
-      final Uint8List? foregroundBytes = result.foregroundBitmap;
-
-      if (foregroundBytes != null && foregroundBytes.isNotEmpty) {
-        Directory tempDir = Directory.systemTemp;
-        String tempPath = '${tempDir.path}/no_bg_${DateTime.now().millisecondsSinceEpoch}.png';
-        File noBgFile = File(tempPath);
-        await noBgFile.writeAsBytes(foregroundBytes);
-        return noBgFile;
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("Không phát hiện được người hoặc vật thể trong ảnh!"),
-              backgroundColor: Colors.orange,
-            ),
-          );
-        }
-        return null;
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("Lỗi tách nền offline: $e"),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-      return null;
-    } finally {
-      // Luôn giải phóng tài nguyên RAM
-      await segmenter?.close();
-    }
-  }
-  // Hộp thoại chỉnh sửa ẢNH
   void _editImageItem(PosterImageIcon imgItem) {
     double tempWidth = imgItem.width;
     double tempHeight = imgItem.height;
@@ -465,7 +504,6 @@ class _PosterScreenState extends State<PosterScreen> {
     BlendMode tempBlendMode = imgItem.blendMode;
     bool tempSoftEdges = imgItem.softEdges;
     bool tempIsOval = imgItem.isOval;
-    bool isLoading = false;
 
     showDialog(
       context: context,
@@ -473,58 +511,19 @@ class _PosterScreenState extends State<PosterScreen> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text("Chỉnh sửa & Xử lý Ảnh"),
+              title: const Text("Chỉnh sửa Ảnh"),
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    ElevatedButton.icon(
-                      onPressed: isLoading
-                          ? null
-                          : () async {
-                        setDialogState(() => isLoading = true);
-                        File? noBgFile = await _removeBackground(imgItem.imageFile);
-                        setDialogState(() => isLoading = false);
-
-                        if (noBgFile != null) {
-                          setState(() {
-                            imgItem.imageFile = noBgFile;
-                          });
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text("Đã tách nền thành công!"),
-                                backgroundColor: Colors.green,
-                              ),
-                            );
-                          }
-                        }
-                      },
-                      icon: isLoading
-                          ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                      )
-                          : const Icon(Icons.auto_fix_high),
-                      label: Text(isLoading ? "Đang xử lý tách nền..." : "Tách nền tự động (Remove BG)"),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.purple,
-                        foregroundColor: Colors.white,
-                        minimumSize: const Size(double.infinity, 42),
-                      ),
-                    ),
-                    const Divider(height: 25),
-
                     SwitchListTile(
                       title: const Text("Bo ảnh hình Ovan (Oval)", style: TextStyle(fontWeight: FontWeight.bold)),
                       value: tempIsOval,
                       contentPadding: EdgeInsets.zero,
                       onChanged: (val) => setDialogState(() => tempIsOval = val),
                     ),
-
-                    const Text("Chế độ hòa trộn với nền:", style: TextStyle(fontWeight: FontWeight.bold)),
+                    const Text("Chế độ hòa trộn:", style: TextStyle(fontWeight: FontWeight.bold)),
                     DropdownButton<BlendMode>(
                       isExpanded: true,
                       value: tempBlendMode,
@@ -539,7 +538,6 @@ class _PosterScreenState extends State<PosterScreen> {
                       },
                     ),
                     const SizedBox(height: 10),
-
                     SwitchListTile(
                       title: const Text("Làm mờ viền ảnh (Mềm viền)", style: TextStyle(fontSize: 14)),
                       value: tempSoftEdges,
@@ -547,7 +545,6 @@ class _PosterScreenState extends State<PosterScreen> {
                       onChanged: (val) => setDialogState(() => tempSoftEdges = val),
                     ),
                     const Divider(),
-
                     Text("Góc xoay: ${tempRotationDegree.round()}°"),
                     Slider(
                       value: tempRotationDegree,
@@ -556,7 +553,6 @@ class _PosterScreenState extends State<PosterScreen> {
                       divisions: 360,
                       onChanged: (val) => setDialogState(() => tempRotationDegree = val),
                     ),
-
                     Text("Chiều rộng: ${tempWidth.round()} px"),
                     Slider(
                       value: tempWidth,
@@ -564,7 +560,6 @@ class _PosterScreenState extends State<PosterScreen> {
                       max: 400.0,
                       onChanged: (val) => setDialogState(() => tempWidth = val),
                     ),
-
                     Text("Chiều cao: ${tempHeight.round()} px"),
                     Slider(
                       value: tempHeight,
@@ -572,7 +567,6 @@ class _PosterScreenState extends State<PosterScreen> {
                       max: 400.0,
                       onChanged: (val) => setDialogState(() => tempHeight = val),
                     ),
-
                     Text("Độ trong suốt: ${(tempOpacity * 100).round()}%"),
                     Slider(
                       value: tempOpacity,
@@ -587,7 +581,10 @@ class _PosterScreenState extends State<PosterScreen> {
               actions: [
                 TextButton(
                   onPressed: () {
-                    setState(() => _imageItems.remove(imgItem));
+                    setState(() {
+                      _imageItems.remove(imgItem);
+                      _selectedImageIndex = null;
+                    });
                     Navigator.pop(context);
                   },
                   child: const Text("Xóa ảnh", style: TextStyle(color: Colors.red)),
@@ -619,7 +616,6 @@ class _PosterScreenState extends State<PosterScreen> {
     );
   }
 
-  // Hộp thoại chỉnh CHỮ (Có cấu hình 3D)
   void _editTextField(PosterTextItem item) {
     TextEditingController editController = TextEditingController(text: item.text);
     double tempFontSize = item.fontSize;
@@ -650,12 +646,11 @@ class _PosterScreenState extends State<PosterScreen> {
                         minLines: 2,
                         maxLines: 6,
                         decoration: const InputDecoration(
-                          labelText: "Nội dung (ấn Enter để xuống dòng)",
+                          labelText: "Nội dung",
                           border: OutlineInputBorder(),
                         ),
                       ),
                       const SizedBox(height: 15),
-
                       DropdownButtonFormField<String>(
                         value: tempFontFamily,
                         decoration: const InputDecoration(
@@ -670,15 +665,12 @@ class _PosterScreenState extends State<PosterScreen> {
                         },
                       ),
                       const SizedBox(height: 15),
-
-                      // Bật/Tắt hiệu ứng 3D khi chỉnh sửa
                       SwitchListTile(
                         title: const Text("Hiệu ứng chữ 3D", style: TextStyle(fontWeight: FontWeight.bold)),
                         value: tempIs3D,
                         contentPadding: EdgeInsets.zero,
                         onChanged: (val) => setDialogState(() => tempIs3D = val),
                       ),
-
                       if (tempIs3D) ...[
                         const Text("Kiểu dáng 3D:", style: TextStyle(fontWeight: FontWeight.bold)),
                         const SizedBox(height: 5),
@@ -708,7 +700,6 @@ class _PosterScreenState extends State<PosterScreen> {
                         ),
                         const SizedBox(height: 10),
                       ],
-
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
@@ -763,7 +754,6 @@ class _PosterScreenState extends State<PosterScreen> {
                         ],
                       ),
                       const Divider(height: 25),
-
                       Text("Góc xoay: ${tempRotationDegree.round()}°"),
                       Slider(
                         value: tempRotationDegree,
@@ -772,7 +762,6 @@ class _PosterScreenState extends State<PosterScreen> {
                         divisions: 360,
                         onChanged: (val) => setDialogState(() => tempRotationDegree = val),
                       ),
-
                       Text("C cỡ chữ: ${tempFontSize.round()}"),
                       Slider(
                         value: tempFontSize,
@@ -780,7 +769,6 @@ class _PosterScreenState extends State<PosterScreen> {
                         max: 70.0,
                         onChanged: (val) => setDialogState(() => tempFontSize = val),
                       ),
-
                       Text("Độ trong suốt: ${(tempOpacity * 100).round()}%"),
                       Slider(
                         value: tempOpacity,
@@ -829,50 +817,68 @@ class _PosterScreenState extends State<PosterScreen> {
     );
   }
 
-  // Hàm Xuất PNG
+  // Bỏ viền chọn xanh lá trước khi lưu/xuất file PNG
   Future<void> _captureAndExportPNG() async {
     try {
-      bool hasAccess = await Gal.hasAccess();
-      if (!hasAccess) {
-        hasAccess = await Gal.requestAccess();
-        if (!hasAccess) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text("Chưa cấp quyền truy cập Thư viện ảnh!")),
-            );
-          }
-          return;
-        }
-      }
+      final previousSelectedIndex = _selectedImageIndex;
+      setState(() {
+        _selectedImageIndex = null;
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
 
       RenderRepaintBoundary boundary =
       _globalKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
       ui.Image image = await boundary.toImage(pixelRatio: 3.0);
       ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-      Uint8List pngBytes = byteData!.buffer.asUint8List();
 
-      await Gal.putImageBytes(pngBytes, album: 'PosterMaker');
+      setState(() {
+        _selectedImageIndex = previousSelectedIndex;
+      });
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Đã lưu Poster vào Thư viện ảnh thành công!"),
-            backgroundColor: Colors.green,
-          ),
-        );
+      if (byteData == null) return;
+      Uint8List pngBytes = byteData.buffer.asUint8List();
+
+      if (kIsWeb) {
+        downloadImageWeb(pngBytes);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Đã tải Poster về thư mục Downloads!"),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        bool hasAccess = await Gal.hasAccess();
+        if (!hasAccess) {
+          hasAccess = await Gal.requestAccess();
+          if (!hasAccess) return;
+        }
+
+        await Gal.putImageBytes(pngBytes, album: 'PosterMaker');
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Đã lưu Poster vào Bộ sưu tập (Gallery)!"),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Lưu ảnh thất bại: $e"), backgroundColor: Colors.red),
+          SnackBar(content: Text("Lỗi xuất ảnh: $e"), backgroundColor: Colors.red),
         );
       }
     }
   }
 
   Widget _buildBlendedImage(PosterImageIcon imgItem) {
-    Widget imgWidget = Image.file(
-      imgItem.imageFile,
+    Widget imgWidget = Image.memory(
+      imgItem.imageBytes,
       width: imgItem.width,
       height: imgItem.height,
       fit: BoxFit.cover,
@@ -903,8 +909,15 @@ class _PosterScreenState extends State<PosterScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Thiết Kế Poster'),
+        title: const Text('Thiết Kế Poster Pro'),
+        backgroundColor: Colors.indigo,
+        foregroundColor: Colors.white,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.aspect_ratio),
+            onPressed: _openPosterSettings,
+            tooltip: 'Kích thước & Màu nền',
+          ),
           IconButton(
             icon: const Icon(Icons.save_alt),
             onPressed: _captureAndExportPNG,
@@ -916,211 +929,203 @@ class _PosterScreenState extends State<PosterScreen> {
         child: Padding(
           padding: const EdgeInsets.all(16.0),
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // 1. THANH CÔNG CỤ THAO TÁC NỔI
+              Card(
+                elevation: 3,
+                child: Padding(
+                  padding: const EdgeInsets.all(10.0),
+                  child: Wrap(
+                    alignment: WrapAlignment.spaceEvenly,
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: _openPosterSettings,
+                        icon: const Icon(Icons.tune),
+                        label: const Text("Khung & Nền"),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.indigo,
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                      ElevatedButton.icon(
+                        onPressed: _pickImage,
+                        icon: const Icon(Icons.add_photo_alternate),
+                        label: const Text("Thêm Ảnh"),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blue,
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                      ElevatedButton.icon(
+                        onPressed: _pickBackgroundImage,
+                        icon: const Icon(Icons.image),
+                        label: const Text("Ảnh Nền"),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.teal,
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                      ElevatedButton.icon(
+                        onPressed: _isRemovingBg ? null : _removeBgSelectedImage,
+                        icon: _isRemovingBg
+                            ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                            : const Icon(Icons.auto_fix_high),
+                        label: Text(_isRemovingBg ? "Đang tách..." : "Tách Nền"),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.purple,
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 15),
+
+              // 2. KHUNG HIỂN THỊ POSTER
               Center(
-                child: RepaintBoundary(
-                  key: _globalKey,
-                  child: Container(
-                    width: _posterWidth,
-                    height: _posterHeight,
-                    decoration: BoxDecoration(
-                      color: _backgroundColor,
-                      image: _backgroundImageFile != null
-                          ? DecorationImage(
-                        image: FileImage(_backgroundImageFile!),
-                        fit: BoxFit.cover,
-                      )
-                          : null,
-                    ),
-                    child: Stack(
-                      children: [
-                        ..._imageItems.map((imgItem) {
-                          return Positioned(
-                            left: imgItem.position.dx,
-                            top: imgItem.position.dy,
-                            child: GestureDetector(
-                              onPanUpdate: (details) {
-                                setState(() => imgItem.position += details.delta);
-                              },
-                              onDoubleTap: () => _editImageItem(imgItem),
-                              child: Transform.rotate(
-                                angle: imgItem.rotation,
-                                child: Opacity(
-                                  opacity: imgItem.opacity,
-                                  child: _buildBlendedImage(imgItem),
-                                ),
-                              ),
-                            ),
-                          );
-                        }).toList(),
-                        ..._textItems.map((item) {
-                          return Positioned(
-                            left: item.position.dx,
-                            top: item.position.dy,
-                            child: GestureDetector(
-                              onPanUpdate: (details) {
-                                setState(() => item.position += details.delta);
-                              },
-                              onDoubleTap: () => _editTextField(item),
-                              child: Transform.rotate(
-                                angle: item.rotation,
-                                child: Opacity(
-                                  opacity: item.opacity,
-                                  child: Container(
-                                    padding: const EdgeInsets.all(4),
-                                    child: _buildTextWidget(item),
+                child: GestureDetector(
+                  onTap: () {
+                    // Chạm ra vùng trống để bỏ chọn ảnh (ẩn viền xanh)
+                    setState(() {
+                      _selectedImageIndex = null;
+                    });
+                  },
+                  child: RepaintBoundary(
+                    key: _globalKey,
+                    child: Container(
+                      width: _posterWidth,
+                      height: _posterHeight,
+                      decoration: BoxDecoration(
+                        color: _backgroundColor,
+                        image: _backgroundImageBytes != null
+                            ? DecorationImage(
+                          image: MemoryImage(_backgroundImageBytes!),
+                          fit: BoxFit.cover,
+                        )
+                            : null,
+                      ),
+                      child: Stack(
+                        children: [
+                          // Render Ảnh Ghép
+                          ..._imageItems.asMap().entries.map((entry) {
+                            int index = entry.key;
+                            PosterImageIcon imgItem = entry.value;
+                            bool isSelected = _selectedImageIndex == index;
+
+                            return Positioned(
+                              left: imgItem.position.dx,
+                              top: imgItem.position.dy,
+                              child: GestureDetector(
+                                onTap: () {
+                                  setState(() {
+                                    _selectedImageIndex = index;
+                                  });
+                                },
+                                onPanUpdate: (details) {
+                                  setState(() {
+                                    _selectedImageIndex = index;
+                                    imgItem.position += details.delta;
+                                  });
+                                },
+                                onDoubleTap: () => _editImageItem(imgItem),
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    border: isSelected
+                                        ? Border.all(color: Colors.greenAccent, width: 2)
+                                        : null,
+                                  ),
+                                  child: Transform.rotate(
+                                    angle: imgItem.rotation,
+                                    child: Opacity(
+                                      opacity: imgItem.opacity,
+                                      child: _buildBlendedImage(imgItem),
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
-                          );
-                        }).toList(),
-                      ],
+                            );
+                          }).toList(),
+
+                          // Render Chữ
+                          ..._textItems.map((item) {
+                            return Positioned(
+                              left: item.position.dx,
+                              top: item.position.dy,
+                              child: GestureDetector(
+                                onPanUpdate: (details) {
+                                  setState(() => item.position += details.delta);
+                                },
+                                onDoubleTap: () => _editTextField(item),
+                                child: Transform.rotate(
+                                  angle: item.rotation,
+                                  child: Opacity(
+                                    opacity: item.opacity,
+                                    child: Container(
+                                      padding: const EdgeInsets.all(4),
+                                      child: _buildTextWidget(item),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
               const SizedBox(height: 20),
 
-              // CẤU HÌNH KÍCH THƯỚC VÀ MÀU NỀN
-              ExpansionTile(
-                title: const Text(
-                  "Chỉnh kích thước & Màu nền Poster",
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-                children: [
-                  Text("Chiều rộng khung: ${_posterWidth.round()} px"),
-                  Slider(
-                    value: _posterWidth,
-                    min: 300.0,
-                    max: 600.0,
-                    onChanged: (val) => setState(() => _posterWidth = val),
-                  ),
-                  Text("Chiều cao khung: ${_posterHeight.round()} px"),
-                  Slider(
-                    value: _posterHeight,
-                    min: 300.0,
-                    max: 1080.0,
-                    onChanged: (val) => setState(() => _posterHeight = val),
-                  ),
-                  const Divider(),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          "Màu nền Poster:",
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                        ),
-                        GestureDetector(
-                          onTap: () {
-                            showDialog(
-                              context: context,
-                              builder: (BuildContext context) {
-                                Color tempColor = _backgroundColor;
-                                return AlertDialog(
-                                  title: const Text('Chọn màu nền Poster'),
-                                  content: SingleChildScrollView(
-                                    child: ColorPicker(
-                                      pickerColor: tempColor,
-                                      onColorChanged: (color) => tempColor = color,
-                                      pickerAreaHeightPercent: 0.7,
-                                      enableAlpha: false,
-                                    ),
-                                  ),
-                                  actions: [
-                                    TextButton(
-                                      child: const Text('Hủy'),
-                                      onPressed: () => Navigator.of(context).pop(),
-                                    ),
-                                    ElevatedButton(
-                                      child: const Text('Đồng ý'),
-                                      onPressed: () {
-                                        setState(() => _backgroundColor = tempColor);
-                                        Navigator.of(context).pop();
-                                      },
-                                    ),
-                                  ],
-                                );
-                              },
-                            );
-                          },
-                          child: Container(
-                            width: 90,
-                            height: 38,
-                            decoration: BoxDecoration(
-                              color: _backgroundColor,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: Colors.grey, width: 2),
-                            ),
-                            child: const Center(
-                              child: Text(
-                                "Đổi màu",
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 13,
-                                  shadows: [Shadow(blurRadius: 3, color: Colors.black)],
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      ElevatedButton.icon(
-                        onPressed: _pickBackgroundImage,
-                        icon: const Icon(Icons.wallpaper),
-                        label: const Text("Chọn ảnh nền"),
-                      ),
-                      if (_backgroundImageFile != null)
-                        TextButton(
-                          onPressed: () => setState(() => _backgroundImageFile = null),
-                          child: const Text("Xóa ảnh nền", style: TextStyle(color: Colors.red)),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                ],
-              ),
-
-              // CARD THÊM CHỮ MỚI & THÊM ẢNH (Bổ sung phần bị thiếu)
+              // 3. KHU VỰC THÊM CHỮ MỚI
               Card(
-                elevation: 2,
-                margin: const EdgeInsets.symmetric(vertical: 8.0),
+                elevation: 3,
                 child: Padding(
-                  padding: const EdgeInsets.all(16.0),
+                  padding: const EdgeInsets.all(12.0),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        "Thêm chữ mới vào Poster",
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                      ),
+                      const Text("Thêm Chữ Mới", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 10),
-                      TextField(
-                        controller: _textController,
-                        decoration: const InputDecoration(
-                          labelText: "Nhập nội dung chữ",
-                          border: OutlineInputBorder(),
-                        ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _textController,
+                              decoration: const InputDecoration(
+                                hintText: "Nhập nội dung...",
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          ElevatedButton(
+                            onPressed: _addNewText,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+                            ),
+                            child: const Text("Thêm"),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 10),
-
+                      const SizedBox(height: 12),
                       Row(
                         children: [
                           Expanded(
                             child: DropdownButtonFormField<String>(
                               value: _newFontFamily,
-                              decoration: const InputDecoration(
-                                labelText: "Font chữ",
-                                border: OutlineInputBorder(),
-                              ),
+                              decoration: const InputDecoration(labelText: "Font chữ", isDense: true),
                               items: _fontList.map((font) {
                                 return DropdownMenuItem(value: font, child: Text(font));
                               }).toList(),
@@ -1158,70 +1163,30 @@ class _PosterScreenState extends State<PosterScreen> {
                               );
                             },
                             child: Container(
-                              width: 50,
-                              height: 50,
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                               decoration: BoxDecoration(
                                 color: _newTextColor,
                                 borderRadius: BorderRadius.circular(8),
                                 border: Border.all(color: Colors.grey),
                               ),
+                              child: const Text(
+                                "Màu chữ",
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                  shadows: [Shadow(blurRadius: 3, color: Colors.black)],
+                                ),
+                              ),
                             ),
                           ),
+                          const SizedBox(width: 10),
+                          FilterChip(
+                            label: const Text("Chữ 3D"),
+                            selected: _newIs3D,
+                            onSelected: (val) => setState(() => _newIs3D = val),
+                          ),
                         ],
-                      ),
-                      const SizedBox(height: 10),
-
-                      // Công tắc Bật 3D khi thêm chữ mới
-                      SwitchListTile(
-                        title: const Text("Tạo chữ 3D", style: TextStyle(fontWeight: FontWeight.bold)),
-                        value: _newIs3D,
-                        contentPadding: EdgeInsets.zero,
-                        onChanged: (val) => setState(() => _newIs3D = val),
-                      ),
-
-                      if (_newIs3D) ...[
-                        Row(
-                          children: [
-                            ChoiceChip(
-                              label: const Text("Nổi"),
-                              selected: _newThreeDStyle == ThreeDStyle.raised,
-                              onSelected: (_) => setState(() => _newThreeDStyle = ThreeDStyle.raised),
-                            ),
-                            const SizedBox(width: 8),
-                            ChoiceChip(
-                              label: const Text("Chìm"),
-                              selected: _newThreeDStyle == ThreeDStyle.inset,
-                              onSelected: (_) => setState(() => _newThreeDStyle = ThreeDStyle.inset),
-                            ),
-                            const SizedBox(width: 8),
-                            ChoiceChip(
-                              label: const Text("Nghiêng"),
-                              selected: _newThreeDStyle == ThreeDStyle.perspectiveRaised,
-                              onSelected: (_) => setState(() => _newThreeDStyle = ThreeDStyle.perspectiveRaised),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                      ],
-
-                      ElevatedButton.icon(
-                        onPressed: _addNewText,
-                        icon: const Icon(Icons.add),
-                        label: const Text("Thêm Chữ"),
-                        style: ElevatedButton.styleFrom(
-                          minimumSize: const Size(double.infinity, 45),
-                        ),
-                      ),
-                      const Divider(height: 30),
-
-                      ElevatedButton.icon(
-                        onPressed: _pickImage, // <--- Đổi thành hàm mở menu chọn Camera / Album
-                        icon: const Icon(Icons.add_photo_alternate),
-                        label: const Text("Thêm Ảnh Ghép"),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.blue,
-                          foregroundColor: Colors.white,
-                        ),
                       ),
                     ],
                   ),
